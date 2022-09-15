@@ -1,0 +1,1680 @@
+---
+title: "dissertation_code"
+output: html_document
+date: '2022-07-03'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+library(sf)
+library(sp)
+library(tidyverse)
+library(here)
+library(janitor)
+library(tmap)
+library(tmaptools)
+library(ggplot2)
+library(broom)
+library(spdep)
+library(spatialreg)
+library(grid)
+library(spgwr)
+library(corrr)
+library(RColorBrewer) 
+library(viridis)
+```
+## Data cleaning
+
+```{r}
+# read in data
+data <- read_csv("data1.csv") %>% 
+  clean_names()
+
+# inspect
+spec(data)
+```
+
+```{r}
+# aggregate data from LSOA level to LA level
+data1 <- data %>%
+  group_by(local_authority_district_code_2019)%>%
+  summarise(count = n(), 
+            mental_outcome = mean(mood_and_anxiety_disorders_indicator),
+            income = mean(income_domain_numerator),
+            employment = mean(employment_domain_numerator),
+            staying_on_in_education_post_16 = mean(staying_on_in_education_post_16_indicator),
+            entry_to_higher_education = mean(entry_to_higher_education_indicator),
+            adult_skills_and_english_language_proficiency = mean(adult_skills_and_english_language_proficiency_indicator),
+            comparative_illness_and_disability_ratio = mean(comparative_illness_and_disability_ratio_indicator),
+            road_distance_to_a_gp_surgery = mean(road_distance_to_a_gp_surgery_indicator_km),
+            housing_in_poor_condition = mean(housing_in_poor_condition_indicator),
+            air_quality = mean(air_quality_indicator)
+            )
+# inspect
+data1
+
+```
+
+```{r}
+# remove na value
+data2 <- data1 %>% 
+  drop_na()
+
+data2
+```
+
+
+```{r}
+
+```
+
+
+
+## Dependent variable
+
+```{r}
+# extract outcome variable
+mental_health <- data2 %>% 
+  dplyr::select(local_authority_district_code_2019,
+                mental_outcome,
+                income,
+                employment,
+                staying_on_in_education_post_16,
+                entry_to_higher_education,
+                adult_skills_and_english_language_proficiency,
+                comparative_illness_and_disability_ratio,
+                road_distance_to_a_gp_surgery,
+                housing_in_poor_condition,
+                air_quality)
+```
+
+
+## spatial data
+```{r}
+# load england regions
+# select useful columns
+england_regions <- st_read("NHS_England_Regions_(April_2017)_Boundaries.shp") %>% 
+  clean_names()%>% 
+  dplyr::select(nhser17cd,nhser17nm,geometry)
+```
+
+```{r}
+# load england lads
+# select useful columns
+england_lad <- st_read("england_lad.shp") %>% 
+  clean_names()%>% 
+  dplyr::select(lad21cd,shape_area,geometry)
+```
+
+```{r}
+# merge spatial data and attribute data
+england_mental <- england_lad %>% 
+  left_join(.,
+            mental_health,
+            by=c("lad21cd"="local_authority_district_code_2019")) %>% 
+  # remove the na values
+  drop_na() %>% 
+  # select the columns we need
+  dplyr::select(lad21cd,
+                mental_outcome,
+                income,
+                employment,
+                staying_on_in_education_post_16,
+                entry_to_higher_education,
+                adult_skills_and_english_language_proficiency,
+                comparative_illness_and_disability_ratio,
+                road_distance_to_a_gp_surgery,
+                housing_in_poor_condition,
+                air_quality,
+                geometry)
+```
+
+```{r}
+# report basic summary statistical measures
+summary(england_mental$mental_outcome)
+```
+
+```{r}
+# outcome histogram
+mental_hist <- ggplot(england_mental, 
+                      aes(x=mental_outcome)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="mental_health_outcome ", 
+       x="mood_and_anxiety_disorders_indicator", 
+       y="frequency")
+
+# add a vertical line to the hisogram showing mean average life expectancy
+mental_hist + geom_vline(aes(xintercept=mean(mental_outcome)),
+                         color="blue", 
+                         linetype="dashed", 
+                         size=1)+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+# plot outcome variable
+tmap_mode("plot")
+plot <- tm_shape(england_mental)+
+        tm_polygons("mental_outcome",
+                     style="quantile",
+                     palette="Greens",
+                     title="mental_health_outcome",
+                     border.alpha = 0)+
+        tm_compass(size = 0.7, position = c("left","top"))+
+        tm_scale_bar(position = c("left","bottom"))+
+        tm_layout(frame = FALSE,legend.title.size = 1,
+                  legend.text.size = 0.7,legend.position=c(0.85,0.05))
+plot
+```
+
+## Independent variables
+
+### Variable 1 Income
+
+```{r}
+# income histogram
+income_hist <- ggplot(england_mental, 
+                      aes(x=income)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Income Numerator Distribution Per England LADs ", 
+       x="Income Numerator", 
+       y="Frequency")
+income_hist
+
+```
+
+```{r}
+# log10
+income_hist1 <- ggplot(england_mental, 
+                      aes(x=log10(income))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Income Numerator Distribution Per England LADs ", 
+       x="Income Numerator", 
+       y="Frequency")
+income_hist1
+```
+
+
+```{r}
+# plot income
+plot1 <- tm_shape(england_mental)+
+  tm_polygons("income",
+              style="quantile",
+              palette="Reds",
+              title="income numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot1
+
+```
+
+### Variable 2 Employment
+
+```{r}
+# employment histogram
+employment_hist <- ggplot(england_mental, 
+                         aes(x=employment)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Employment Numerator Distribution Per England LADs ", 
+       x="Employment Numerator", 
+       y="Frequency")
+employment_hist
+
+```
+
+```{r}
+# log10
+employment_hist1 <- ggplot(england_mental, 
+                           aes(x=log10(employment))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Employment Numerator Distribution Per England LADs ", 
+       x="Employment Numerator", 
+       y="Frequency")
+employment_hist1
+```
+
+
+```{r}
+# plot employment
+plot2 <- tm_shape(england_mental)+
+  tm_polygons("employment",
+              style="quantile",
+              palette="Blues",
+              title="employment numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot2
+
+```
+
+
+### Variable 3 staying_on_in_education_post_16
+
+```{r}
+# staying_on_in_education_post_16 histogram
+staying_hist <- ggplot(england_mental, 
+                       aes(x=staying_on_in_education_post_16)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Education1 Numerator Distribution Per England LADs ", 
+       x="staying_on_in_education_post_16 Numerator", 
+       y="Frequency")
+staying_hist
+
+```
+
+```{r}
+# log10
+staying_hist1 <- ggplot(england_mental, 
+                        aes(x=log10(staying_on_in_education_post_16))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Education1 Numerator Distribution Per England LADs ", 
+       x="staying_on_in_education_post_16 Numerator", 
+       y="Frequency")
+staying_hist1
+```
+
+```{r}
+# plot staying_on_in_education_post_16
+plot3 <- tm_shape(england_mental)+
+  tm_polygons("staying_on_in_education_post_16",
+              style="quantile",
+              palette="Oranges",
+              title="staying_on_in_education_post_16 numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot3
+
+```
+
+
+### Variable 4  entry_to_higher_education,
+  
+```{r}
+# employment histogram
+entry_hist <- ggplot(england_mental, 
+                     aes(x=entry_to_higher_education)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Educarion2 Numerator Distribution Per England LADs ", 
+       x="entry_to_higher_education Numerator", 
+       y="Frequency")
+entry_hist
+
+```
+
+```{r}
+# log10
+entry_hist1 <- ggplot(england_mental, 
+                      aes(x=log10(entry_to_higher_education))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Education2 Numerator Distribution Per England LADs ", 
+       x="entry_to_higher_education Numerator", 
+       y="Frequency")
+entry_hist1
+```
+
+```{r}
+# plot employment
+plot4 <- tm_shape(england_mental)+
+  tm_polygons("entry_to_higher_education",
+              style="quantile",
+              palette="Purples",
+              title="entry_to_higher_education numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot4
+
+```              
+                
+                
+               
+
+### Variable 5 adult_skills_and_english_language_proficiency
+
+```{r}
+# adult_skills_and_english_language_proficiency histogram
+adult_hist <- ggplot(england_mental, 
+                     aes(x=adult_skills_and_english_language_proficiency)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Education3 Numerator Distribution Per England LADs ", 
+       x="adult_skills_and_english_language_proficiency Numerator", 
+       y="Frequency")
+adult_hist
+
+```
+
+```{r}
+# log10
+adult_hist1 <- ggplot(england_mental, 
+                           aes(x=log10(adult_skills_and_english_language_proficiency))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Education3 Numerator Distribution Per England LADs ", 
+       x="adult_skills_and_english_language_proficiency Numerator", 
+       y="Frequency")
+adult_hist1
+```
+
+```{r}
+# plot adult_skills_and_english_language_proficiency
+plot5 <- tm_shape(england_mental)+
+  tm_polygons("adult_skills_and_english_language_proficiency",
+              style="quantile",
+              palette="YlOrRd",
+              title="adult_skills_and_english_language_proficiency numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot5
+
+```
+
+
+### Variable 6 comparative_illness_and_disability_ratio
+
+```{r}
+# employment histogram
+comparative_hist <- ggplot(england_mental, 
+                         aes(x=comparative_illness_and_disability_ratio)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Health1 Numerator Distribution Per England LADs ", 
+       x="comparative_illness_and_disability_ratio Numerator", 
+       y="Frequency")
+comparative_hist
+
+```
+
+```{r}
+# log10
+comparative_hist1 <- ggplot(england_mental, 
+                           aes(x=log10(comparative_illness_and_disability_ratio))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Health1 Numerator Distribution Per England LADs ", 
+       x="comparative_illness_and_disability_ratio Numerator", 
+       y="Frequency")
+comparative_hist1
+```
+
+```{r}
+# plot comparative_illness_and_disability_ratio
+plot6 <- tm_shape(england_mental)+
+  tm_polygons("comparative_illness_and_disability_ratio",
+              style="quantile",
+              palette="YlGn",
+              title="comparative_illness_and_disability_ratio numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot6
+
+```
+
+
+### Variable 7 road_distance_to_a_gp_surgery
+
+```{r}
+# road_distance_to_a_gp_surgery histogram
+road_hist <- ggplot(england_mental, 
+                    aes(x=road_distance_to_a_gp_surgery)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Health2 Numerator Distribution Per England LADs ", 
+       x="road_distance_to_a_gp_surgery Numerator", 
+       y="Frequency")
+road_hist
+
+```
+
+```{r}
+# log10
+road_hist1 <- ggplot(england_mental, 
+                           aes(x=log10(road_distance_to_a_gp_surgery))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Health2 Numerator Distribution Per England LADs ", 
+       x="road_distance_to_a_gp_surgery Numerator", 
+       y="Frequency")
+road_hist1
+```
+
+```{r}
+# plot road_distance_to_a_gp_surgery
+plot7 <- tm_shape(england_mental)+
+  tm_polygons("road_distance_to_a_gp_surgery",
+              style="quantile",
+              palette="GnBu",
+              title="road_distance_to_a_gp_surgery numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot7
+
+```
+
+
+### Variable 8  housing_in_poor_condition
+
+```{r}
+# housing_in_poor_condition histogram
+housing_hist <- ggplot(england_mental, 
+                       aes(x=housing_in_poor_condition)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Environment1 Numerator Distribution Per England LADs ", 
+       x="housing_in_poor_condition Numerator", 
+       y="Frequency")
+housing_hist
+
+```
+
+```{r}
+# log10
+housing_hist1 <- ggplot(england_mental, 
+                        aes(x=log10(housing_in_poor_condition))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Environment1 Numerator Distribution Per England LADs ", 
+       x="housing_in_poor_condition Numerator", 
+       y="Frequency")
+housing_hist1
+```
+
+```{r}
+# plot housing_in_poor_condition
+plot8 <- tm_shape(england_mental)+
+  tm_polygons("housing_in_poor_condition",
+              style="quantile",
+              palette="RdPu",
+              title="housing_in_poor_condition numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot8
+
+```
+
+
+### Variable 9 air_quality
+
+```{r}
+# employment histogram
+air_hist <- ggplot(england_mental, 
+                   aes(x=air_quality)) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Environment2 Numerator Distribution Per England LADs ", 
+       x="air_quality Numerator", 
+       y="Frequency")
+air_hist
+
+```
+
+```{r}
+# log10
+air_hist1 <- ggplot(england_mental, 
+                           aes(x=log10(air_quality))) + 
+  geom_histogram(color="black", 
+                 fill="white")+
+  labs(title="Environment2 Numerator Distribution Per England LADs ", 
+       x="air_quality Numerator", 
+       y="Frequency")
+air_hist1
+```
+
+```{r}
+# plot air_quality
+plot9 <- tm_shape(england_mental)+
+  tm_polygons("air_quality",
+              style="quantile",
+              palette="BuPu",
+              title="air_quality numerator",
+              border.alpha = 0)+
+  tm_compass(position = c("right","top"))+
+  tm_scale_bar(position = c("left","bottom"))+
+  tm_layout(frame = FALSE,legend.title.size = 1,
+            legend.text.size = 0.8,legend.position=c(0.85,0.05))
+
+plot9
+
+```
+
+## plt all independent variables together
+
+```{r}
+# plot together
+all_variables <- tmap_arrange(plot1, plot2, plot3, plot4, plot5, plot6, plot7, plot8, plot9, ncol=3)
+all_variables
+
+# export
+# tmap_save(all_variables,filename = "03_all_variables_plot.png")
+```
+
+## Geographically Weighted Regression
+
+```{r}
+library(spgwr)
+library(ggplot2)
+library(maptools)
+library(spdep)
+library(car)
+library(corrr)
+```
+
+
+```{r}
+#select some variables from the data 
+regression_data <- england_mental %>%
+                   dplyr::select(mental_outcome,
+                                 income,
+                                 employment,
+                                 staying_on_in_education_post_16,
+                                 entry_to_higher_education,
+                                 adult_skills_and_english_language_proficiency,
+                                 comparative_illness_and_disability_ratio,
+                                 road_distance_to_a_gp_surgery,
+                                 housing_in_poor_condition,
+                                 air_quality)
+
+```
+
+
+```{r}
+#check their correlations are OK
+correlation_reg_data <- regression_data %>%
+                        st_drop_geometry()%>%
+                        dplyr::select(-air_quality)%>%
+                        correlate()
+```
+
+
+```{r}
+#run a final OLS model
+
+model1 <- lm(mental_outcome ~ income + 
+                              employment + 
+                              staying_on_in_education_post_16 + 
+                              entry_to_higher_education +
+                              adult_skills_and_english_language_proficiency +
+                              comparative_illness_and_disability_ratio +
+                              road_distance_to_a_gp_surgery +
+                              housing_in_poor_condition +
+                              air_quality, 
+                              data = regression_data)
+
+tidy(model1)
+```
+```{r}
+# model1 results
+summary(model1)
+AIC(model1)
+```
+
+```{r}
+# add the model1 residuals into data file
+england_mental1 <- england_mental %>%
+                   mutate(model1_final_res = residuals(model1))
+
+par(mfrow=c(2,2))
+plot(model1)
+```
+
+```{r}
+a <- qtm(england_mental1, fill = "model1_final_res",midpoint = NA)
+
+# export
+tmap_save(a,filename = "00_olsresiduals_plot.png")
+
+```
+
+
+
+```{r}
+#calculate the centroids of all lads in england
+coords_lad <- england_mental%>%
+              st_centroid()%>%
+              st_geometry()
+
+plot(coords_lad)
+```
+```{r}
+# spatial weight matrix 
+# nearest neighbours
+knn_lads <-coords_lad %>%
+           knearneigh(., k=4)
+
+england_knn <- knn_lads %>%
+               knn2nb()
+
+plot(england_knn, st_geometry(coords_lad), col="blue")
+```
+
+```{r}
+#create a spatial weights matrix object from these weights
+
+england.knn_4_weight <- england_knn %>%
+                        nb2listw(., style="W")
+```
+
+```{r}
+# moran 
+model1_moran <- england_mental1 %>%
+                st_drop_geometry()%>%
+                dplyr::select(model1_final_res)%>%
+                pull()%>%
+                moran.test(., england.knn_4_weight)%>%
+                tidy()
+
+model1_moran
+```
+
+```{r}
+
+library(spgwr)
+
+coords_lad2 <- st_coordinates(coords_lad)
+
+england_mental2 <- cbind(england_mental1,coords_lad2)
+
+gwr_bandwidth <- gwr.sel(mental_outcome ~ income + 
+                                          employment + 
+                                          staying_on_in_education_post_16 + 
+                                          entry_to_higher_education +
+                                          adult_skills_and_english_language_proficiency +
+                                          comparative_illness_and_disability_ratio +
+                                          road_distance_to_a_gp_surgery +
+                                          housing_in_poor_condition +
+                                          air_quality,
+                         data = england_mental2, 
+                         coords=cbind(england_mental2$X, england_mental2$Y),
+                         adapt=T)
+```
+
+```{r}
+gwr_bandwidth
+```
+
+
+```{r}
+#run the gwr model
+gwr_model = gwr(mental_outcome ~ income + 
+                                 employment + 
+                                 staying_on_in_education_post_16 + 
+                                 entry_to_higher_education +
+                                 adult_skills_and_english_language_proficiency +
+                                 comparative_illness_and_disability_ratio +
+                                 road_distance_to_a_gp_surgery +
+                                 housing_in_poor_condition +
+                                 air_quality,
+                data = england_mental2, 
+                coords=cbind(england_mental2$X, england_mental2$Y),
+                adapt=gwr_bandwidth,
+                #matrix output
+                hatmatrix=TRUE,
+                #standard error
+                se.fit=TRUE)
+
+#print the results of the model
+gwr_model
+```
+
+```{r}
+# gwr results
+gwr_results <- as.data.frame(gwr_model$SDF)
+names(gwr_results)
+```
+
+
+```{r}
+#attach coefficients to data file
+
+england_mental3 <- england_mental2 %>%
+                   mutate(coef_income = gwr_results$income,
+                          coef_employment = gwr_results$employment,
+                          coef_staying = gwr_results$staying_on_in_education_post_16,
+                          coef_entry = gwr_results$entry_to_higher_education,
+                          coef_adult = gwr_results$adult_skills_and_english_language_proficiency,
+                          coef_comparative = gwr_results$comparative_illness_and_disability_ratio,
+                          coef_road = gwr_results$road_distance_to_a_gp_surgery,
+                          coef_housing = gwr_results$housing_in_poor_condition,
+                          coef_air = gwr_results$air_quality,
+                          localr2 = gwr_results$localR2
+                          )
+```
+
+
+## GWR results visualisation
+
+## Global result
+
+```{r}
+# plot local r2
+legend_title = expression("Adaptive: Local R2")
+map_gwr1 = tm_shape(england_mental3) +
+  tm_fill(col = "localr2", title = legend_title, palette = magma(256), style = "cont") + # add fill
+  tm_borders(col = "white", lwd = .1)  + # add borders
+  tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+  tm_scale_bar(breaks = c(0,1,2), text.size = 0.7, position =  c("center", "bottom")) + # add scale bar
+  tm_layout(bg.color = "white") # change background colour
+map_gwr1 + tm_shape(england_regions) + # add region boundaries
+  tm_borders(col = "white", lwd = .5) # add borders
+
+```
+
+### 1.Income
+
+```{r}
+#run the significance test
+sig_test1 = abs(gwr_model$SDF$income)-2 * gwr_model$SDF$income_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_income_sig = sig_test1)
+
+```
+
+
+```{r}
+# plot income significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_income_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot income coefficient
+legend_title = expression("Income")
+map_gwr2 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_income", title = legend_title, palette = rev(magma(256)), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr2 = map_gwr2 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr2
+
+```
+
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_income = gwr_model$SDF$income / gwr_model$SDF$income_se
+
+# categorise t values
+england_mental3$gwr_income_sigcat <- cut(england_mental3$t_income,
+                                     breaks=c(min(england_mental3$t_income), -2, 2, max(england_mental3$t_income)),
+                                     labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Income: significant")
+map_income_sig = tm_shape(england_mental3) + 
+                 tm_fill(col = "gwr_income_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                         textNA = "",colorNA = "white") +  # add fill
+                 tm_borders(col = "white", lwd = .1)  + # add borders
+                 tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                 tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                 tm_layout(bg.color = "white", legend.outside = FALSE, 
+                           legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_income_sig = map_income_sig + tm_shape(england_regions) + # add region boundaries
+                 tm_borders(col = "white", lwd = .5) # add borders
+map_income_sig
+```
+
+
+```{r}
+# plot together
+income_fig <- tmap_arrange(map_gwr2, map_income_sig, ncol=2)
+income_fig
+
+# export
+tmap_save(income_fig,filename = "01_income_plot.png")
+
+```
+
+
+### 2.Employment
+
+
+```{r}
+#run the significance test
+sig_test2 = abs(gwr_model$SDF$employment)-2 * gwr_model$SDF$employment_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_employment_sig = sig_test2)
+
+```
+
+```{r}
+# plot employment significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_employment_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot employment coefficient
+legend_title = expression("Employment")
+map_gwr3 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_employment", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+            tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr3 = map_gwr3 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr3
+
+```
+
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_employment = gwr_model$SDF$employment / gwr_model$SDF$employment_se
+
+# categorize t values
+england_mental3$gwr_employment_sigcat <- cut(england_mental3$t_employment,
+                                         breaks=c(min(england_mental3$t_employment), -2, 2,
+                                                  max(england_mental3$t_employment)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Employment: significant")
+map_employment_sig = tm_shape(england_mental3) + 
+                     tm_fill(col = "gwr_employment_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                             textNA = "",colorNA = "white") +  # add fill
+                 tm_borders(col = "white", lwd = .1)  + # add borders
+                 tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                 tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                 tm_layout(bg.color = "white", legend.outside = FALSE, 
+                           legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_employment_sig = map_employment_sig + 
+                     tm_shape(england_regions) + # add region boundaries
+                     tm_borders(col = "white", lwd = .5) # add borders
+map_employment_sig
+```
+
+```{r}
+# plot together
+employment_fig <- tmap_arrange(map_gwr3, map_employment_sig, ncol=2)
+employment_fig
+
+# export
+tmap_save(employment_fig,filename = "02_employment_plot.png")
+
+```
+
+### 3.Staying on in education post 16
+
+
+```{r}
+#run the significance test
+sig_test3 = abs(gwr_model$SDF$staying_on_in_education_post_16)-2 * gwr_model$SDF$staying_on_in_education_post_16_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_staying_sig = sig_test3)
+
+```
+
+```{r}
+# plot staying significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_staying_sig", 
+              palette = "RdYlBu")
+
+```
+
+```{r}
+# plot staying coefficient
+legend_title = expression("Education1")
+map_gwr4 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_staying", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+            tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr4 = map_gwr4 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr4
+
+```
+
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_education1 = gwr_model$SDF$staying_on_in_education_post_16 / gwr_model$SDF$staying_on_in_education_post_16_se
+
+# categorise t values
+england_mental3$gwr_education1_sigcat <- cut(england_mental3$t_education1,
+                                         breaks=c(min(england_mental3$t_education1), -2, 2,
+                                                  max(england_mental3$t_education1)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Education1: significant")
+map_education1_sig = tm_shape(england_mental3) + 
+                     tm_fill(col = "gwr_education1_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                             textNA = "",colorNA = "white") +  # add fill
+                     tm_borders(col = "white", lwd = .1)  + # add borders
+                     tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                     tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                     tm_layout(bg.color = "white", legend.outside = FALSE, 
+                               legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_education1_sig = map_education1_sig + tm_shape(england_regions) + # add region boundaries
+                     tm_borders(col = "white", lwd = .5) # add borders
+map_education1_sig
+```
+
+```{r}
+# plot together
+education1_fig <- tmap_arrange(map_gwr4, map_education1_sig, ncol=2)
+education1_fig
+
+# export
+tmap_save(education1_fig,filename = "03_staying_plot.png")
+
+```
+
+### 4.Entry to higher education
+
+```{r}
+#run the significance test
+sig_test4 = abs(gwr_model$SDF$entry_to_higher_education )-2 * gwr_model$SDF$entry_to_higher_education_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_entry_sig = sig_test4)
+
+```
+
+```{r}
+# plot entry significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_entry_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot entry coefficient
+legend_title = expression("Education2")
+map_gwr5 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_entry", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr5 = map_gwr5 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr5
+
+```
+
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_education2 = gwr_model$SDF$entry_to_higher_education / gwr_model$SDF$entry_to_higher_education_se
+
+# categorise t values
+england_mental3$gwr_education2_sigcat <- cut(england_mental3$t_education2,
+                                         breaks=c(min(england_mental3$t_education2), -2, 2,
+                                                  max(england_mental3$t_education2)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Education2: significant")
+map_education2_sig = tm_shape(england_mental3) + 
+                     tm_fill(col = "gwr_education2_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                             textNA = "",colorNA = "white") +  # add fill
+                     tm_borders(col = "white", lwd = .1)  + # add borders
+                     tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                     tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                     tm_layout(bg.color = "white", legend.outside = FALSE, 
+                               legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_education2_sig = map_education2_sig + tm_shape(england_regions) + # add region boundaries
+                     tm_borders(col = "white", lwd = .5) # add borders
+map_education2_sig
+```
+
+```{r}
+# plot together
+education2_fig <- tmap_arrange(map_gwr5, map_education2_sig, ncol=2)
+education2_fig
+
+# export
+tmap_save(education2_fig,filename = "04_entry_plot.png")
+
+```
+
+
+### 5.Adult skills and english proficiency
+
+
+```{r}
+#run the significance test
+sig_test5 = abs(gwr_model$SDF$adult_skills_and_english_language_proficiency)-2 * gwr_model$SDF$adult_skills_and_english_language_proficiency_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_adult_sig = sig_test5)
+
+```
+
+```{r}
+# plot adult significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_adult_sig", 
+              palette = "RdYlBu")
+
+```
+
+```{r}
+# plot adult coefficient
+legend_title = expression("Education3")
+map_gwr6 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_adult", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr6 = map_gwr6 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr6
+
+```
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_education3 = gwr_model$SDF$adult_skills_and_english_language_proficiency / gwr_model$SDF$adult_skills_and_english_language_proficiency_se
+
+# categorise t values
+england_mental3$gwr_education3_sigcat <- cut(england_mental3$t_education3,
+                                         breaks=c(min(england_mental3$t_education3), -2, 2,
+                                                  max(england_mental3$t_education3)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Education3: significant")
+map_education3_sig = tm_shape(england_mental3) + 
+                     tm_fill(col = "gwr_education3_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                             textNA = "",colorNA = "white") +  # add fill
+                     tm_borders(col = "white", lwd = .1)  + # add borders
+                     tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                     tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                     tm_layout(bg.color = "white", legend.outside = FALSE, 
+                               legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_education3_sig = map_education3_sig + tm_shape(england_regions) + # add region boundaries
+                     tm_borders(col = "white", lwd = .5) # add borders
+map_education3_sig
+```
+
+```{r}
+# plot together
+education3_fig <- tmap_arrange(map_gwr6, map_education3_sig, ncol=2)
+education3_fig
+
+# export
+tmap_save(education3_fig,filename = "05_adult_plot.png")
+
+```
+
+### 6.Comparative illness and disability ratio
+
+
+```{r}
+#run the significance test
+sig_test6 = abs(gwr_model$SDF$comparative_illness_and_disability_ratio)-2 * gwr_model$SDF$comparative_illness_and_disability_ratio_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_comparative_sig = sig_test6)
+
+```
+
+```{r}
+# plot comparative significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_comparative_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot comparative coefficient
+legend_title = expression("Health")
+map_gwr7 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_comparative", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr7 = map_gwr7 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr7
+
+```
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_health = gwr_model$SDF$comparative_illness_and_disability_ratio / gwr_model$SDF$comparative_illness_and_disability_ratio_se
+
+# categorise t values
+england_mental3$gwr_health_sigcat <- cut(england_mental3$t_health,
+                                         breaks=c(min(england_mental3$t_health), -2, 2,
+                                                  max(england_mental3$t_health)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Health: significant")
+map_health_sig = tm_shape(england_mental3) + 
+                 tm_fill(col = "gwr_health_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                         textNA = "",colorNA = "white") +  # add fill
+                 tm_borders(col = "white", lwd = .1)  + # add borders
+                 tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                 tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                 tm_layout(bg.color = "white", legend.outside = FALSE, 
+                           legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_health_sig = map_health_sig + tm_shape(england_regions) + # add region boundaries
+                 tm_borders(col = "white", lwd = .5) # add borders
+map_health_sig
+```
+
+```{r}
+# plot together
+health_fig <- tmap_arrange(map_gwr7, map_health_sig, ncol=2)
+health_fig
+
+# export
+tmap_save(health_fig,filename = "06_comparative_plot.png")
+
+```
+
+### 7.Road distance to a gp surgery
+
+```{r}
+#run the significance test
+sig_test7 = abs(gwr_model$SDF$road_distance_to_a_gp_surgery)-2 * gwr_model$SDF$road_distance_to_a_gp_surgery_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_road_sig = sig_test7)
+
+```
+
+```{r}
+# plot road significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_road_sig", 
+              palette = "RdYlBu")
+
+```
+
+```{r}
+# plot road coefficient
+legend_title = expression("Environment1")
+map_gwr8 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_road", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr8 = map_gwr8 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr8
+
+```
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_environment1 = gwr_model$SDF$road_distance_to_a_gp_surgery / gwr_model$SDF$road_distance_to_a_gp_surgery_se
+
+# categorise t values
+england_mental3$gwr_environment1_sigcat <- cut(england_mental3$t_environment1,
+                                           breaks=c(min(england_mental3$t_environment1), -2, 2,
+                                                    max(england_mental3$t_environment1)),
+                                           labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Environment1: significant")
+map_environment1_sig = tm_shape(england_mental3) + 
+                       tm_fill(col = "gwr_environment1_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                               textNA = "",colorNA = "white") +  # add fill
+                       tm_borders(col = "white", lwd = .1)  + # add borders
+                       tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                       tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                       tm_layout(bg.color = "white", legend.outside = FALSE, 
+                                 legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_environment1_sig = map_environment1_sig + tm_shape(england_regions) + # add region boundaries
+                       tm_borders(col = "white", lwd = .5) # add borders
+map_environment1_sig
+```
+
+```{r}
+# plot together
+environment1_fig <- tmap_arrange(map_gwr8, map_environment1_sig, ncol=2)
+environment1_fig
+
+# export
+tmap_save(environment1_fig,filename = "07_road_plot.png")
+
+```
+
+
+### 8.Housing in poor condition
+
+```{r}
+#run the significance test
+sig_test8 = abs(gwr_model$SDF$housing_in_poor_condition)-2 * gwr_model$SDF$housing_in_poor_condition_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_housing_sig = sig_test8)
+
+```
+
+```{r}
+# plot housing significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_housing_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot housing coefficient
+legend_title = expression("Environment2")
+map_gwr9 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_housing", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr9 = map_gwr9 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr9
+
+```
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_environment2 = gwr_model$SDF$housing_in_poor_condition / gwr_model$SDF$housing_in_poor_condition_se
+
+# categorise t values
+england_mental3$gwr_environment2_sigcat <- cut(england_mental3$t_environment2,
+                                         breaks=c(min(england_mental3$t_environment2), -2, 2,
+                                                  max(england_mental3$t_environment2)),
+                                         labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Environment2: significant")
+map_environment2_sig = tm_shape(england_mental3) + 
+                       tm_fill(col = "gwr_environment2_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                               textNA = "",colorNA = "white") +  # add fill
+                       tm_borders(col = "white", lwd = .1)  + # add borders
+                       tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                       tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                       tm_layout(bg.color = "white", legend.outside = FALSE, 
+                                 legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_environment2_sig = map_environment2_sig + tm_shape(england_regions) + # add region boundaries
+                       tm_borders(col = "white", lwd = .5) # add borders
+map_environment2_sig
+```
+
+```{r}
+# plot together
+environment2_fig <- tmap_arrange(map_gwr9, map_environment2_sig, ncol=2)
+environment2_fig
+
+# export
+tmap_save(environment2_fig,filename = "08_housing_plot.png")
+
+```
+
+
+
+### 9.Air quality
+
+```{r}
+#run the significance test
+sig_test9 = abs(gwr_model$SDF$air_quality)-2 * gwr_model$SDF$air_quality_se
+
+
+#store significance results
+england_mental3 <- england_mental3 %>%
+                   mutate(gwr_air_sig = sig_test9)
+
+```
+
+```{r}
+# plot air significance
+tm_shape(england_mental3) +
+  tm_polygons(col = "gwr_air_sig", 
+              palette = "RdYlBu")
+
+```
+```{r}
+# plot adult coefficient
+legend_title = expression("Environment3")
+map_gwr10 = tm_shape(england_mental3) +
+           tm_fill(col = "coef_air", title = legend_title, palette = magma(256), style = "cont") + # add fill
+           tm_borders(col = "white", lwd = .1)  + # add borders
+           tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+           tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+           tm_layout(bg.color = "white") # change background colour
+
+map_gwr10 = map_gwr10 + tm_shape(england_regions) + # add region boundaries
+           tm_borders(col = "white", lwd = .5) # add borders
+
+map_gwr10
+
+```
+
+# t statistic
+```{r}
+# compute t statistic
+england_mental3$t_environment3 = gwr_model$SDF$air_quality / gwr_model$SDF$air_quality_se
+
+# categorise t values
+england_mental3$gwr_environment3_sigcat <- cut(england_mental3$t_environment3,
+                                           breaks=c(min(england_mental3$t_environment3), -2, 2,
+                                                    max(england_mental3$t_environment3)),
+                                           labels=c("sig","nonsig", "sig"))
+
+```
+
+```{r}
+# map statistically significant coefs for income
+legend_title = expression("Environment3: significant")
+map_environment3_sig = tm_shape(england_mental3) + 
+                       tm_fill(col = "gwr_environment3_sigcat", title = legend_title, legend.hist = TRUE, midpoint = NA, 
+                               textNA = "",colorNA = "white") +  # add fill
+                       tm_borders(col = "white", lwd = .1)  + # add borders
+                       tm_compass(type = "arrow", position = c("right", "top") , size = 3) + # add compass
+                       tm_scale_bar(position =  c("right", "bottom")) + # add scale bar
+                       tm_layout(bg.color = "white", legend.outside = FALSE, 
+                                 legend.hist.size = 1,legend.hist.width = .3) # change background colour & place legend outside
+
+map_environment3_sig = map_environment3_sig + tm_shape(england_regions) + # add region boundaries
+                       tm_borders(col = "white", lwd = .5) # add borders
+map_environment3_sig
+```
+
+```{r}
+# plot together
+environment3_fig <- tmap_arrange(map_gwr10, map_environment3_sig, ncol=2)
+environment3_fig
+
+# export
+tmap_save(environment3_fig,filename = "09_air_plot.png")
+
+```
+## summary
+```{r}
+summary(england_mental3$gwr_income_sigcat)
+summary(england_mental3$gwr_employment_sigcat)
+summary(england_mental3$gwr_education1_sigcat)
+summary(england_mental3$gwr_education2_sigcat)
+summary(england_mental3$gwr_education3_sigcat)
+summary(england_mental3$gwr_health_sigcat)
+summary(england_mental3$gwr_environment1_sigcat)
+summary(england_mental3$gwr_environment2_sigcat)
+summary(england_mental3$gwr_environment3_sigcat)
+
+```
+
+
+## export dataset
+
+```{r}
+# export dataset into shapefile
+st_write(england_mental1, "england_mental.shp")
+
+```
+
+
+```{r}
+# export dataset into excel
+write.csv(england_mental3, file = "england_mental.csv")
+
+```
+
+## multicollinearity
+
+```{r}
+#select some variables from the data 
+regression_data2 <- england_mental %>%
+                   dplyr::select(mental_outcome,
+                                 income,
+                                 employment,
+                                 staying_on_in_education_post_16,
+                                 entry_to_higher_education,
+                                 adult_skills_and_english_language_proficiency,
+                                 comparative_illness_and_disability_ratio,
+                                 road_distance_to_a_gp_surgery,
+                                 housing_in_poor_condition,
+                                 air_quality)
+
+```
+
+```{r}
+#run a final OLS model
+
+model2 <- lm(mental_outcome ~ income + 
+                              employment + 
+                              staying_on_in_education_post_16 + 
+                              entry_to_higher_education +
+                              adult_skills_and_english_language_proficiency +
+                              comparative_illness_and_disability_ratio +
+                              road_distance_to_a_gp_surgery +
+                              housing_in_poor_condition +
+                              air_quality, 
+                              data = regression_data2)
+
+tidy(model2)
+glance(model2)
+```
+
+```{r}
+#and for future use, write the residuals out
+model_data <- model2 %>%
+  augment(., regression_data2)
+
+# also add them to the shapelayer
+england_mental3 <- england_mental3 %>%
+  mutate(model2_resids = residuals(model2))
+```
+
+
+```{r}
+# calculate correlation between independent variables
+correlation <- england_mental3 %>%
+               st_drop_geometry()%>%
+               dplyr::select(mental_outcome,
+                             income,
+                             employment,
+                             staying_on_in_education_post_16,
+                             entry_to_higher_education,
+                             adult_skills_and_english_language_proficiency,
+                             comparative_illness_and_disability_ratio,
+                             road_distance_to_a_gp_surgery,
+                             housing_in_poor_condition,
+                             air_quality) %>%
+               dplyr::rename(education1 = staying_on_in_education_post_16,
+                             education2 = entry_to_higher_education,
+                             education3 = adult_skills_and_english_language_proficiency,
+                             health = comparative_illness_and_disability_ratio,
+                             environment1 = road_distance_to_a_gp_surgery,
+                             environment2 = housing_in_poor_condition,
+                             environment3 = air_quality) %>% 
+               correlate() %>%
+               # just focus on GCSE and house prices
+               focus(-mental_outcome, mirror = TRUE) 
+
+
+# visualise the correlation matrix
+rplot(correlation)
+```
+
+```{r}
+library(corrplot)
+
+# check the correlation between independent variables
+correlation2 <- england_mental3 %>%
+                st_drop_geometry()%>%
+                dplyr::select(income,
+                              employment,
+                              staying_on_in_education_post_16,
+                              entry_to_higher_education,
+                              adult_skills_and_english_language_proficiency,
+                              comparative_illness_and_disability_ratio,
+                              road_distance_to_a_gp_surgery,
+                              housing_in_poor_condition,
+                              air_quality) %>%
+                dplyr::rename(education1 = staying_on_in_education_post_16,
+                              education2 = entry_to_higher_education,
+                              education3 = adult_skills_and_english_language_proficiency,
+                              health = comparative_illness_and_disability_ratio,
+                              environment1 = road_distance_to_a_gp_surgery,
+                              environment2 = housing_in_poor_condition,
+                              environment3 = air_quality) %>% 
+                cor()
+
+# inspect 
+# head(round(correlation2,2))
+correlation2
+```
+
+```{r}
+# plot the correlation matrix
+multicollinearity_plot <- corrplot(correlation2, method="color",tl.col="black")
+
+```
+
+```{r}
+# check the VIF for multicollinearity
+# if VIF is over 10, maybe need to remove the variable
+vif(model2)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
